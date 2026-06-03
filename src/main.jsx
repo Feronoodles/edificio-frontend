@@ -5,6 +5,7 @@ import {
   CircleCheck,
   Building2,
   DoorOpen,
+  Eye,
   LogOut,
   Pencil,
   Plus,
@@ -21,6 +22,33 @@ import "./styles.css";
 
 const STORAGE_KEY = "edificio-app-session";
 const PAYMENT_STATUSES = ["PENDING", "PAID", "OVERDUE", "CANCELLED"];
+const PAYMENT_EDITABLE_STATUSES = ["PENDING", "PAID", "CANCELLED"];
+const PAYMENT_METHODS = ["CASH", "BANK_TRANSFER", "CARD", "YAPE", "PLIN", "OTHER"];
+const PAYMENT_CONCEPTS = [
+  "Mantenimiento",
+  "Agua",
+  "Luz de areas comunes",
+  "Vigilancia",
+  "Limpieza",
+  "Multa por atraso",
+  "Cuota extraordinaria",
+  "Reparacion",
+  "Otro"
+];
+const PAYMENT_STATUS_LABELS = {
+  PENDING: "Pendiente",
+  PAID: "Pagado",
+  OVERDUE: "Vencido",
+  CANCELLED: "Anulado"
+};
+const PAYMENT_METHOD_LABELS = {
+  CASH: "Efectivo",
+  BANK_TRANSFER: "Transferencia",
+  CARD: "Tarjeta",
+  YAPE: "Yape",
+  PLIN: "Plin",
+  OTHER: "Otro"
+};
 
 const emptyForms = {
   buildings: { name: "", address: "", district: "", city: "" },
@@ -37,10 +65,15 @@ const emptyForms = {
   },
   payments: {
     apartmentId: "",
-    concept: "",
+    concept: "Mantenimiento",
+    conceptPreset: "Mantenimiento",
+    customConcept: "",
     amount: "",
+    paidAmount: "",
     dueDate: new Date().toISOString().slice(0, 10),
     paidAt: "",
+    paymentMethod: "",
+    reference: "",
     status: "PENDING"
   }
 };
@@ -71,6 +104,7 @@ function App() {
   const [filters, setFilters] = useState(emptyFilters);
   const [editDialog, setEditDialog] = useState(null);
   const [deleteDialog, setDeleteDialog] = useState(null);
+  const [apartmentDetail, setApartmentDetail] = useState(null);
   const [alertDialog, setAlertDialog] = useState(null);
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -166,6 +200,7 @@ function App() {
     setData({ buildings: [], apartments: [], residents: [], payments: [] });
     setEditDialog(null);
     setDeleteDialog(null);
+    setApartmentDetail(null);
   }
 
   function showSuccess(message) {
@@ -185,6 +220,14 @@ function App() {
   }
 
   function setForm(type, field, value) {
+    if (type === "payments") {
+      setForms((current) => ({
+        ...current,
+        payments: updatePaymentForm(current.payments, field, value)
+      }));
+      return;
+    }
+
     setForms((current) => ({
       ...current,
       [type]: { ...current[type], [field]: value }
@@ -221,7 +264,7 @@ function App() {
   function setEditField(field, value) {
     setEditDialog((current) => ({
       ...current,
-      form: { ...current.form, [field]: value }
+      form: current.type === "payments" ? updatePaymentForm(current.form, field, value) : { ...current.form, [field]: value }
     }));
   }
 
@@ -266,6 +309,26 @@ function App() {
       setDeleteDialog(null);
       await loadAll();
       showSuccess("Registro eliminado.");
+    } catch (error) {
+      showError(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function markPaymentPaid(payment) {
+    const payload = serialize("payments", {
+      ...normalizeForForm("payments", payment),
+      status: "PAID",
+      paidAt: today(),
+      paidAmount: payment.amount || 0
+    });
+    setLoading(true);
+    setNotice("");
+    try {
+      await api.put(`/api/payments/${payment.id}`, payload);
+      await loadAll();
+      showSuccess("Pago marcado como pagado.");
     } catch (error) {
       showError(error);
     } finally {
@@ -375,6 +438,7 @@ function App() {
             onSave={() => create("apartments")}
             onReset={() => resetForm("apartments")}
             onEdit={(row) => beginEdit("apartments", row)}
+            onView={(row) => setApartmentDetail(row)}
             onDelete={(row) =>
               setDeleteDialog({
                 type: "apartments",
@@ -415,6 +479,7 @@ function App() {
             onReset={() => resetForm("payments")}
             onEdit={(row) => beginEdit("payments", row)}
             onDelete={(row) => setDeleteDialog({ type: "payments", id: row.id, label: row.concept })}
+            onMarkPaid={markPaymentPaid}
           />
         )}
 
@@ -437,6 +502,8 @@ function App() {
             onConfirm={() => remove(deleteDialog.type, deleteDialog.id)}
           />
         )}
+
+        {apartmentDetail && <ApartmentDetailModal apartment={apartmentDetail} data={data} onClose={() => setApartmentDetail(null)} />}
 
         {alertDialog && <AlertDialog alert={alertDialog} onClose={() => setAlertDialog(null)} />}
         {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
@@ -491,6 +558,7 @@ function LoginScreen({ onLogin, loading, notice }) {
 }
 
 function Overview({ stats, data }) {
+  const alerts = operationalAlerts(data);
   const cards = [
     { label: "Edificios", value: stats.buildings, icon: Building2 },
     { label: "Departamentos", value: stats.apartments, icon: DoorOpen },
@@ -510,15 +578,28 @@ function Overview({ stats, data }) {
           </article>
         );
       })}
+      <article className="wide-panel operations-panel">
+        <h2>Alertas operativas</h2>
+        <div className="operations-list">
+          {alerts.map((alert) => (
+            <div className={`operation-item ${alert.tone}`} key={alert.label}>
+              <strong>{alert.value}</strong>
+              <span>{alert.label}</span>
+            </div>
+          ))}
+        </div>
+      </article>
       <article className="wide-panel">
         <h2>Pagos recientes</h2>
         <DataTable
-          columns={["Concepto", "Monto", "Vence", "Estado"]}
+          title="Pagos recientes"
+          columns={["Concepto", "Monto", "Saldo", "Vence", "Estado"]}
           rows={data.payments.slice(0, 6).map((payment) => [
             payment.concept,
             formatMoney(payment.amount),
+            formatMoney(paymentBalance(payment)),
             payment.dueDate,
-            <StatusBadge status={payment.status} />
+            <StatusBadge status={effectivePaymentStatus(payment)} />
           ])}
         />
       </article>
@@ -565,6 +646,7 @@ function BuildingsPanel(props) {
         </SelectInput>
       </FilterPanel>
       <DataTable
+        title="Edificios"
         columns={["Nombre", "Direccion", "Distrito", "Ciudad", "Acciones"]}
         rows={rows.map((row) => [
           row.name,
@@ -579,7 +661,7 @@ function BuildingsPanel(props) {
 }
 
 function ApartmentsPanel(props) {
-  const { rows, buildings, filters, form, onChange, onFilter, onResetFilters, onSave, onReset, onEdit, onDelete } = props;
+  const { rows, buildings, filters, form, onChange, onFilter, onResetFilters, onSave, onReset, onEdit, onView, onDelete } = props;
   return (
     <CrudLayout title="Nuevo departamento">
       <FormGrid>
@@ -594,7 +676,7 @@ function ApartmentsPanel(props) {
         <TextInput label="Numero" value={form.number} onChange={(value) => onChange("number", value)} />
         <TextInput label="Piso" type="number" value={form.floor} onChange={(value) => onChange("floor", value)} />
         <TextInput label="Area m2" type="number" value={form.areaM2} onChange={(value) => onChange("areaM2", value)} />
-        <ToggleInput label="Ocupado" checked={form.occupied} onChange={(value) => onChange("occupied", value)} />
+        <div className="form-hint">La ocupacion se actualiza automaticamente segun residentes activos.</div>
       </FormGrid>
       <FormActions onSave={onSave} onReset={onReset} />
       <FilterPanel count={rows.length} onReset={onResetFilters}>
@@ -607,6 +689,7 @@ function ApartmentsPanel(props) {
         </SelectInput>
       </FilterPanel>
       <DataTable
+        title="Departamentos"
         columns={["Numero", "Edificio", "Piso", "Area", "Estado", "Auditoria", "Acciones"]}
         rows={rows.map((row) => [
           row.number,
@@ -615,7 +698,15 @@ function ApartmentsPanel(props) {
           `${row.areaM2 || 0} m2`,
           row.occupied ? "Ocupado" : "Libre",
           <AuditInfo row={row} />,
-          <RowActions onEdit={() => onEdit(row)} onDelete={() => onDelete(row)} />
+          <RowActions
+            onEdit={() => onEdit(row)}
+            onDelete={() => onDelete(row)}
+            extra={
+              <button className="icon-button" onClick={() => onView(row)} title="Ver detalle">
+                <Eye size={16} />
+              </button>
+            }
+          />
         ])}
       />
     </CrudLayout>
@@ -666,6 +757,7 @@ function ResidentsPanel(props) {
         </SelectInput>
       </FilterPanel>
       <DataTable
+        title="Residentes"
         columns={["Nombre", "Departamento", "Documento", "Contacto", "Rol", "Auditoria", "Acciones"]}
         rows={rows.map((row) => [
           `${row.firstName} ${row.lastName}`,
@@ -682,30 +774,12 @@ function ResidentsPanel(props) {
 }
 
 function PaymentsPanel(props) {
-  const { rows, apartments, buildings, filters, form, onChange, onFilter, onResetFilters, onSave, onReset, onEdit, onDelete } = props;
+  const { rows, apartments, buildings, filters, form, onChange, onFilter, onResetFilters, onSave, onReset, onEdit, onDelete, onMarkPaid } =
+    props;
   const selectableApartments = apartmentsForBuilding(apartments, filters.buildingId);
   return (
     <CrudLayout title="Nuevo pago">
-      <FormGrid>
-        <ApartmentSelect
-          label="Departamento"
-          value={form.apartmentId}
-          apartments={apartments}
-          buildings={buildings}
-          onChange={(value) => onChange("apartmentId", value)}
-        />
-        <TextInput label="Concepto" value={form.concept} onChange={(value) => onChange("concept", value)} />
-        <TextInput label="Monto" type="number" value={form.amount} onChange={(value) => onChange("amount", value)} />
-        <TextInput label="Vencimiento" type="date" value={form.dueDate} onChange={(value) => onChange("dueDate", value)} />
-        <TextInput label="Fecha de pago" type="date" value={form.paidAt || ""} onChange={(value) => onChange("paidAt", value)} />
-        <SelectInput label="Estado" value={form.status} onChange={(value) => onChange("status", value)}>
-          {PAYMENT_STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {status}
-            </option>
-          ))}
-        </SelectInput>
-      </FormGrid>
+      <PaymentForm form={form} apartments={apartments} buildings={buildings} onChange={onChange} />
       <FormActions onSave={onSave} onReset={onReset} />
       <FilterPanel count={rows.length} onReset={onResetFilters}>
         <BuildingFilter value={filters.buildingId} buildings={buildings} onChange={(value) => onFilter("buildingId", value)} />
@@ -721,7 +795,7 @@ function PaymentsPanel(props) {
           <option value="all">Todos</option>
           {PAYMENT_STATUSES.map((status) => (
             <option key={status} value={status}>
-              {status}
+              {PAYMENT_STATUS_LABELS[status]}
             </option>
           ))}
         </SelectInput>
@@ -729,18 +803,85 @@ function PaymentsPanel(props) {
         <TextInput label="Hasta" type="date" value={filters.to} onChange={(value) => onFilter("to", value)} />
       </FilterPanel>
       <DataTable
-        columns={["Concepto", "Departamento", "Monto", "Vence", "Estado", "Auditoria", "Acciones"]}
+        title="Pagos"
+        columns={["Concepto", "Departamento", "Monto", "Pagado", "Saldo", "Vence", "Estado", "Metodo", "Auditoria", "Acciones"]}
         rows={rows.map((row) => [
           row.concept,
           apartmentLabelById(apartments, buildings, row.apartmentId),
           formatMoney(row.amount),
+          formatMoney(paidAmountFor(row)),
+          formatMoney(paymentBalance(row)),
           row.dueDate,
-          <StatusBadge status={row.status} />,
+          <StatusBadge status={effectivePaymentStatus(row)} />,
+          paymentMethodText(row),
           <AuditInfo row={row} />,
-          <RowActions onEdit={() => onEdit(row)} onDelete={() => onDelete(row)} />
+          <RowActions
+            onEdit={() => onEdit(row)}
+            onDelete={() => onDelete(row)}
+            extra={
+              row.status !== "PAID" && row.status !== "CANCELLED" ? (
+                <button className="icon-button success" onClick={() => onMarkPaid(row)} title="Marcar como pagado">
+                  <CircleCheck size={16} />
+                </button>
+              ) : null
+            }
+          />
         ])}
       />
     </CrudLayout>
+  );
+}
+
+function PaymentForm({ form, apartments, buildings, onChange }) {
+  const isPaid = form.status === "PAID";
+  const isOverdue = form.status === "PENDING" && form.dueDate && form.dueDate < today();
+  const hasPaymentInfo = isPaid || Number(form.paidAmount || 0) > 0;
+  const balance = Math.max(Number(form.amount || 0) - Number(form.paidAmount || 0), 0);
+  return (
+    <FormGrid>
+      <ApartmentSelect
+        label="Departamento"
+        value={form.apartmentId}
+        apartments={apartments}
+        buildings={buildings}
+        onChange={(value) => onChange("apartmentId", value)}
+      />
+      <SelectInput label="Concepto" value={form.conceptPreset || conceptPresetFor(form.concept)} onChange={(value) => onChange("conceptPreset", value)}>
+        {PAYMENT_CONCEPTS.map((concept) => (
+          <option key={concept} value={concept}>
+            {concept}
+          </option>
+        ))}
+      </SelectInput>
+      {(form.conceptPreset === "Otro" || conceptPresetFor(form.concept) === "Otro") && (
+        <TextInput label="Concepto personalizado" value={form.customConcept} onChange={(value) => onChange("customConcept", value)} />
+      )}
+      <TextInput label="Monto" type="number" value={form.amount} onChange={(value) => onChange("amount", value)} />
+      <TextInput label="Monto pagado" type="number" value={form.paidAmount || ""} onChange={(value) => onChange("paidAmount", value)} />
+      <TextInput label="Vencimiento" type="date" value={form.dueDate} onChange={(value) => onChange("dueDate", value)} />
+      <SelectInput label="Estado" value={form.status} onChange={(value) => onChange("status", value)}>
+        {PAYMENT_EDITABLE_STATUSES.map((status) => (
+          <option key={status} value={status}>
+            {PAYMENT_STATUS_LABELS[status]}
+          </option>
+        ))}
+      </SelectInput>
+      {isPaid && <TextInput label="Fecha de pago" type="date" value={form.paidAt || ""} onChange={(value) => onChange("paidAt", value)} />}
+      {hasPaymentInfo && (
+        <SelectInput label="Metodo de pago" value={form.paymentMethod || ""} onChange={(value) => onChange("paymentMethod", value)}>
+          <option value="">Sin registrar</option>
+          {PAYMENT_METHODS.map((method) => (
+            <option key={method} value={method}>
+              {PAYMENT_METHOD_LABELS[method]}
+            </option>
+          ))}
+        </SelectInput>
+      )}
+      {hasPaymentInfo && <TextInput label="Referencia / operacion" value={form.reference || ""} onChange={(value) => onChange("reference", value)} />}
+      {Number(form.paidAmount || 0) > 0 && balance > 0 && <div className="form-hint warning">Pago parcial: queda un saldo de {formatMoney(balance)}.</div>}
+      {isOverdue && <div className="form-hint warning">Este pago se mostrara como vencido porque la fecha de vencimiento ya paso.</div>}
+      {!isPaid && <div className="form-hint">La fecha de pago se registra solo cuando el estado es pagado.</div>}
+    </FormGrid>
   );
 }
 
@@ -774,6 +915,76 @@ function EditModal({ dialog, data, loading, onChange, onCancel, onSave }) {
             <span>Guardar cambios</span>
           </button>
         </div>
+      </section>
+    </div>
+  );
+}
+
+function ApartmentDetailModal({ apartment, data, onClose }) {
+  const residents = data.residents.filter((resident) => sameId(resident.apartmentId, apartment.id));
+  const payments = data.payments.filter((payment) => sameId(payment.apartmentId, apartment.id));
+  const pendingBalance = payments
+    .filter((payment) => payment.status !== "PAID" && payment.status !== "CANCELLED")
+    .reduce((sum, payment) => sum + paymentBalance(payment), 0);
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal detail-modal" role="dialog" aria-modal="true" aria-label="Detalle de departamento">
+        <div className="modal-header">
+          <div>
+            <span>{buildingName(data.buildings, apartment.buildingId)}</span>
+            <h2>Dpto {apartment.number}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar">
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="detail-metrics">
+          <div>
+            <span>Estado</span>
+            <strong>{apartment.occupied ? "Ocupado" : "Libre"}</strong>
+          </div>
+          <div>
+            <span>Residentes activos</span>
+            <strong>{residents.filter((resident) => resident.active).length}</strong>
+          </div>
+          <div>
+            <span>Saldo pendiente</span>
+            <strong>{formatMoney(pendingBalance)}</strong>
+          </div>
+        </div>
+
+        <section className="detail-section">
+          <h3>Residentes</h3>
+          <DataTable
+            title={`Residentes - Dpto ${apartment.number}`}
+            columns={["Nombre", "Documento", "Contacto", "Rol", "Estado"]}
+            rows={residents.map((resident) => [
+              `${resident.firstName} ${resident.lastName}`,
+              resident.documentNumber,
+              resident.email || resident.phone || "-",
+              resident.owner ? "Propietario" : "Inquilino",
+              resident.active ? "Activo" : "Inactivo"
+            ])}
+          />
+        </section>
+
+        <section className="detail-section">
+          <h3>Pagos</h3>
+          <DataTable
+            title={`Pagos - Dpto ${apartment.number}`}
+            columns={["Concepto", "Monto", "Pagado", "Saldo", "Vence", "Estado"]}
+            rows={payments.map((payment) => [
+              payment.concept,
+              formatMoney(payment.amount),
+              formatMoney(paidAmountFor(payment)),
+              formatMoney(paymentBalance(payment)),
+              payment.dueDate,
+              <StatusBadge status={effectivePaymentStatus(payment)} />
+            ])}
+          />
+        </section>
       </section>
     </div>
   );
@@ -873,7 +1084,7 @@ function EntityForm({ type, form, data, onChange }) {
         <TextInput label="Numero" value={form.number} onChange={(value) => onChange("number", value)} />
         <TextInput label="Piso" type="number" value={form.floor} onChange={(value) => onChange("floor", value)} />
         <TextInput label="Area m2" type="number" value={form.areaM2} onChange={(value) => onChange("areaM2", value)} />
-        <ToggleInput label="Ocupado" checked={form.occupied} onChange={(value) => onChange("occupied", value)} />
+        <div className="form-hint">La ocupacion se actualiza automaticamente segun residentes activos.</div>
       </FormGrid>
     );
   }
@@ -900,26 +1111,7 @@ function EntityForm({ type, form, data, onChange }) {
   }
 
   return (
-    <FormGrid>
-      <ApartmentSelect
-        label="Departamento"
-        value={form.apartmentId}
-        apartments={data.apartments}
-        buildings={data.buildings}
-        onChange={(value) => onChange("apartmentId", value)}
-      />
-      <TextInput label="Concepto" value={form.concept} onChange={(value) => onChange("concept", value)} />
-      <TextInput label="Monto" type="number" value={form.amount} onChange={(value) => onChange("amount", value)} />
-      <TextInput label="Vencimiento" type="date" value={form.dueDate} onChange={(value) => onChange("dueDate", value)} />
-      <TextInput label="Fecha de pago" type="date" value={form.paidAt || ""} onChange={(value) => onChange("paidAt", value)} />
-      <SelectInput label="Estado" value={form.status} onChange={(value) => onChange("status", value)}>
-        {PAYMENT_STATUSES.map((status) => (
-          <option key={status} value={status}>
-            {status}
-          </option>
-        ))}
-      </SelectInput>
-    </FormGrid>
+    <PaymentForm form={form} apartments={data.apartments} buildings={data.buildings} onChange={onChange} />
   );
 }
 
@@ -990,7 +1182,7 @@ function ApartmentSelect({ label, value, apartments, buildings, onChange, allowA
         <optgroup key={group.building.id} label={group.building.name}>
           {group.apartments.map((apartment) => (
             <option key={apartment.id} value={apartment.id}>
-              {apartmentOptionText(apartment)}
+              {apartmentOptionText(apartment, buildings)}
             </option>
           ))}
         </optgroup>
@@ -1047,42 +1239,107 @@ function FormActions({ onSave, onReset }) {
   );
 }
 
-function DataTable({ columns, rows }) {
+function DataTable({ columns, rows, title = "Reporte" }) {
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const pageCount = Math.max(Math.ceil(rows.length / pageSize), 1);
+  const safePage = Math.min(page, pageCount);
+  const visibleRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const report = reportData(columns, rows);
+
+  function exportCsv() {
+    const csv = [
+      ["Reporte", title],
+      ["Generado", formatDateTime(new Date().toISOString())],
+      ["Registros", report.rows.length],
+      [],
+      report.columns,
+      ...report.rows
+    ]
+      .map((row) => row.map(escapeCsv).join(";"))
+      .join("\r\n");
+    const blob = new Blob([`\ufeffsep=;\r\n${csv}`], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${reportFileName(title)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportPdf() {
+    const popup = window.open("", "_blank");
+    if (!popup) return;
+    popup.document.write(reportHtml(title, report));
+    popup.document.close();
+    popup.focus();
+    window.setTimeout(() => popup.print(), 250);
+  }
+
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th key={column}>{column}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row, index) => (
-              <tr key={index}>
-                {row.map((cell, cellIndex) => (
-                  <td key={cellIndex}>{cell}</td>
-                ))}
-              </tr>
-            ))
-          ) : (
+    <div className="table-shell">
+      <div className="table-toolbar">
+        <span>
+          {rows.length} registro{rows.length === 1 ? "" : "s"}
+        </span>
+        <div className="table-export-actions">
+          <button className="secondary compact" onClick={exportCsv} disabled={!rows.length}>
+            Exportar CSV
+          </button>
+          <button className="secondary compact" onClick={exportPdf} disabled={!rows.length}>
+            Exportar PDF
+          </button>
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
             <tr>
-              <td colSpan={columns.length} className="empty">
-                Sin registros
-              </td>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.length ? (
+              visibleRows.map((row, index) => (
+                <tr key={`${safePage}-${index}`}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex}>{cell}</td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={columns.length} className="empty">
+                  Sin registros
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {rows.length > pageSize && (
+        <div className="pagination">
+          <button className="secondary compact" onClick={() => setPage((current) => Math.max(current - 1, 1))} disabled={safePage === 1}>
+            Anterior
+          </button>
+          <span>
+            Pagina {safePage} de {pageCount}
+          </span>
+          <button className="secondary compact" onClick={() => setPage((current) => Math.min(current + 1, pageCount))} disabled={safePage === pageCount}>
+            Siguiente
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function RowActions({ onEdit, onDelete }) {
+function RowActions({ onEdit, onDelete, extra }) {
   return (
     <div className="row-actions">
+      {extra}
       <button className="icon-button" onClick={onEdit} title="Editar">
         <Pencil size={16} />
       </button>
@@ -1110,7 +1367,7 @@ function AuditInfo({ row }) {
 }
 
 function StatusBadge({ status }) {
-  return <span className={`status ${status?.toLowerCase()}`}>{status}</span>;
+  return <span className={`status ${status?.toLowerCase()}`}>{PAYMENT_STATUS_LABELS[status] || status}</span>;
 }
 
 function createApi(token, onRefresh) {
@@ -1178,16 +1435,29 @@ function serialize(type, form) {
       active: Boolean(form.active)
     };
   }
+  const { conceptPreset, customConcept, ...payment } = form;
   return {
-    ...form,
+    ...payment,
     apartmentId: Number(form.apartmentId),
     amount: Number(form.amount),
-    paidAt: form.paidAt || null
+    paidAmount: Number(form.paidAmount || 0),
+    concept: paymentConcept(form),
+    paidAt: form.status === "PAID" ? form.paidAt || today() : null
   };
 }
 
 function normalizeForForm(type, row) {
-  if (type === "payments") return { ...row, paidAt: row.paidAt || "" };
+  if (type === "payments") {
+    const preset = conceptPresetFor(row.concept);
+    return {
+      ...row,
+      status: row.status === "OVERDUE" ? "PENDING" : row.status,
+      conceptPreset: preset,
+      customConcept: preset === "Otro" ? row.concept : "",
+      paidAmount: row.paidAmount || "",
+      paidAt: row.paidAt || ""
+    };
+  }
   return { ...row };
 }
 
@@ -1195,7 +1465,7 @@ function getStats(data) {
   const occupied = data.apartments.filter((apartment) => apartment.occupied).length;
   const pendingAmount = data.payments
     .filter((payment) => payment.status === "PENDING" || payment.status === "OVERDUE")
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+    .reduce((sum, payment) => sum + paymentBalance(payment), 0);
 
   return {
     buildings: data.buildings.length,
@@ -1206,8 +1476,178 @@ function getStats(data) {
   };
 }
 
+function operationalAlerts(data) {
+  const todayDate = today();
+  const nextWeek = addDays(todayDate, 7);
+  const activePayments = data.payments.filter((payment) => payment.status !== "PAID" && payment.status !== "CANCELLED");
+  const overdue = activePayments.filter((payment) => effectivePaymentStatus(payment) === "OVERDUE");
+  const dueSoon = activePayments.filter((payment) => payment.dueDate >= todayDate && payment.dueDate <= nextWeek);
+  const partial = activePayments.filter((payment) => Number(payment.paidAmount || 0) > 0 && paymentBalance(payment) > 0);
+  const freeApartments = data.apartments.filter((apartment) => !apartment.occupied);
+
+  return [
+    { label: "pagos vencidos", value: overdue.length, tone: overdue.length ? "danger" : "neutral" },
+    { label: "vencen en 7 dias", value: dueSoon.length, tone: dueSoon.length ? "warning" : "neutral" },
+    { label: "pagos parciales", value: partial.length, tone: partial.length ? "warning" : "neutral" },
+    { label: "departamentos libres", value: freeApartments.length, tone: "neutral" }
+  ];
+}
+
 function formatMoney(value) {
   return new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN" }).format(Number(value || 0));
+}
+
+function paymentBalance(payment) {
+  return Math.max(Number(payment.amount || 0) - paidAmountFor(payment), 0);
+}
+
+function paidAmountFor(payment) {
+  if ((payment.paidAmount == null || payment.paidAmount === "") && payment.status === "PAID") {
+    return Number(payment.amount || 0);
+  }
+  return Number(payment.paidAmount || 0);
+}
+
+function paymentMethodText(payment) {
+  if (!payment.paymentMethod && !payment.reference) return "-";
+  return [PAYMENT_METHOD_LABELS[payment.paymentMethod] || payment.paymentMethod, payment.reference].filter(Boolean).join(" / ");
+}
+
+function reportData(columns, rows) {
+  const includedIndexes = columns.map((column, index) => ({ column, index })).filter((item) => item.column !== "Acciones");
+  return {
+    columns: includedIndexes.map((item) => item.column),
+    rows: rows.map((row) => includedIndexes.map((item) => cellToText(row[item.index])))
+  };
+}
+
+function cellToText(cell) {
+  if (cell == null) return "";
+  if (typeof cell === "string" || typeof cell === "number" || typeof cell === "boolean") return String(cell);
+  if (React.isValidElement(cell)) {
+    if (cell.type === StatusBadge) return PAYMENT_STATUS_LABELS[cell.props.status] || cell.props.status || "";
+    if (cell.type === AuditInfo) {
+      const row = cell.props.row || {};
+      const created = `Creado por ${row.createdBy || "system"}${row.createdAt ? ` el ${formatDateTime(row.createdAt)}` : ""}`;
+      const edited = row.updatedBy || row.updatedAt ? `Editado por ${row.updatedBy || "-"}${row.updatedAt ? ` el ${formatDateTime(row.updatedAt)}` : ""}` : "";
+      return [created, edited].filter(Boolean).join(" | ");
+    }
+    return "";
+  }
+  return String(cell);
+}
+
+function escapeCsv(value) {
+  const text = String(value ?? "");
+  return /[";\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function reportFileName(title) {
+  return `edificio-app-${normalize(title).replaceAll(" ", "-") || "reporte"}-${today()}`;
+}
+
+function reportHtml(title, report) {
+  const generatedAt = formatDateTime(new Date().toISOString());
+  const header = report.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("");
+  const body = report.rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .join("");
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { margin: 18mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #20332b; font-family: Arial, sans-serif; }
+    header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; margin-bottom: 20px; padding-bottom: 14px; border-bottom: 2px solid #2f826d; }
+    h1 { margin: 0 0 6px; font-size: 24px; }
+    p { margin: 0; color: #5d6c66; font-size: 12px; }
+    .meta { text-align: right; }
+    .summary { display: inline-block; margin-top: 8px; padding: 7px 10px; border-radius: 6px; background: #edf6f2; color: #225f50; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th { background: #20332b; color: #ffffff; text-align: left; }
+    th, td { padding: 8px 7px; border: 1px solid #d9e3df; vertical-align: top; }
+    tbody tr:nth-child(even) { background: #f7fbfa; }
+    footer { margin-top: 18px; color: #7a8781; font-size: 10px; text-align: right; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>${escapeHtml(title)}</h1>
+      <p>Edificio App</p>
+      <span class="summary">${report.rows.length} registro${report.rows.length === 1 ? "" : "s"}</span>
+    </div>
+    <div class="meta">
+      <p>Generado</p>
+      <strong>${escapeHtml(generatedAt)}</strong>
+    </div>
+  </header>
+  <table>
+    <thead><tr>${header}</tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+  <footer>Reporte generado desde Edificio App</footer>
+</body>
+</html>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function updatePaymentForm(form, field, value) {
+  const next = { ...form, [field]: value };
+  if (field === "conceptPreset") {
+    next.concept = value === "Otro" ? next.customConcept : value;
+  }
+  if (field === "customConcept") {
+    next.concept = next.conceptPreset === "Otro" ? value : next.concept;
+  }
+  if (field === "status") {
+    if (value === "PAID" && !next.paidAt) {
+      next.paidAt = today();
+    }
+    if (value === "PAID" && !Number(next.paidAmount || 0)) {
+      next.paidAmount = next.amount || "";
+    }
+    if (value !== "PAID") {
+      next.paidAt = "";
+    }
+  }
+  if (field === "amount" && next.status === "PAID" && !Number(next.paidAmount || 0)) {
+    next.paidAmount = value;
+  }
+  return next;
+}
+
+function paymentConcept(form) {
+  if (form.conceptPreset === "Otro") {
+    return String(form.customConcept || "").trim();
+  }
+  return form.conceptPreset || form.concept;
+}
+
+function conceptPresetFor(concept) {
+  return PAYMENT_CONCEPTS.includes(concept) ? concept : "Otro";
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const value = new Date(`${date}T00:00:00`);
+  value.setDate(value.getDate() + days);
+  return value.toISOString().slice(0, 10);
 }
 
 function formatDateTime(value) {
@@ -1231,8 +1671,10 @@ function apartmentLabel(apartment, buildings) {
   return `${buildingName(buildings, apartment.buildingId)} / Dpto ${apartment.number} / Piso ${apartment.floor}`;
 }
 
-function apartmentOptionText(apartment) {
-  return `Dpto ${apartment.number} - Piso ${apartment.floor}${apartment.occupied ? " - Ocupado" : " - Libre"}`;
+function apartmentOptionText(apartment, buildings) {
+  return `${buildingName(buildings, apartment.buildingId)} - Dpto ${apartment.number} - Piso ${apartment.floor}${
+    apartment.occupied ? " - Ocupado" : " - Libre"
+  }`;
 }
 
 function apartmentsForBuilding(apartments, buildingId) {
@@ -1306,11 +1748,18 @@ function filterPayments(payments, apartments, buildings, query, filters) {
     ]);
     const matchesBuilding = !filters.buildingId || (apartment && sameId(apartment.buildingId, filters.buildingId));
     const matchesApartment = !filters.apartmentId || sameId(payment.apartmentId, filters.apartmentId);
-    const matchesStatus = filters.status === "all" || payment.status === filters.status;
+    const matchesStatus = filters.status === "all" || effectivePaymentStatus(payment) === filters.status;
     const matchesFrom = !filters.from || payment.dueDate >= filters.from;
     const matchesTo = !filters.to || payment.dueDate <= filters.to;
     return matchesSearch && matchesBuilding && matchesApartment && matchesStatus && matchesFrom && matchesTo;
   });
+}
+
+function effectivePaymentStatus(payment) {
+  if (payment.status === "PENDING" && payment.dueDate && payment.dueDate < today()) {
+    return "OVERDUE";
+  }
+  return payment.status;
 }
 
 function matchesNeedle(needle, values) {
@@ -1365,4 +1814,7 @@ function apartmentDeleteDescription(apartment, data) {
   return `Este departamento tiene ${residents} residente(s) y ${payments} pago(s) activos. Para eliminarlo, primero elimina esos registros relacionados.`;
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+const rootElement = document.getElementById("root");
+const root = window.__edificioRoot ?? createRoot(rootElement);
+window.__edificioRoot = root;
+root.render(<App />);
