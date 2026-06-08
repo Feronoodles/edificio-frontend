@@ -106,8 +106,23 @@ button {
   box-shadow: inset 3px 0 0 #9bcfbd;
 }
 
-.logout {
+.sidebar-legal {
+  display: grid;
+  gap: 4px;
   margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sidebar-legal button {
+  min-height: 32px;
+  padding: 0 10px;
+  color: #b8c9c1;
+  font-size: 12px;
+}
+
+.logout {
+  margin-top: 10px;
   color: #f3b0a8;
 }
 
@@ -704,6 +719,49 @@ button.compact {
   font-size: 16px;
 }
 
+.legal-modal {
+  max-width: min(760px, calc(100vw - 32px));
+}
+
+.legal-intro {
+  margin: 0 0 12px;
+  color: #4f5e58;
+  line-height: 1.55;
+}
+
+.legal-warning {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid #f2d2a7;
+  border-radius: 8px;
+  background: #fff8ed;
+  color: #6f4b14;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.legal-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.legal-sections section {
+  padding-bottom: 14px;
+  border-bottom: 1px solid #edf1ef;
+}
+
+.legal-sections h3 {
+  margin: 0 0 6px;
+  color: #20332b;
+  font-size: 15px;
+}
+
+.legal-sections p {
+  margin: 0;
+  color: #52615b;
+  line-height: 1.5;
+}
+
 .confirm-modal p {
   margin: 12px 0 22px;
   color: #4f5e58;
@@ -923,6 +981,42 @@ tbody tr:hover {
   padding: 0 12px;
   border: 1px solid #cfdbd7;
   border-radius: 8px;
+}
+
+.login-form .legal-consent {
+  grid-template-columns: 18px 1fr;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe6e2;
+  border-radius: 8px;
+  background: #f8fbfa;
+  color: #4d5d56;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.legal-consent input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  padding: 0;
+  accent-color: #2f826d;
+}
+
+.inline-link {
+  display: inline;
+  padding: 0;
+  background: transparent;
+  color: #2f826d;
+  font: inherit;
+  font-weight: 900;
+  text-decoration: underline;
+}
+
+.inline-link:hover {
+  color: #245f70;
 }
 
 .spin {

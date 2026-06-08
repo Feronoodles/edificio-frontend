@@ -49,6 +49,87 @@ const PAYMENT_METHOD_LABELS = {
   PLIN: "Plin",
   OTHER: "Otro"
 };
+const LEGAL_DOCS = {
+  terms: {
+    title: "Terminos y Condiciones",
+    intro:
+      "Estos terminos regulan el uso de Edificio App por administradores autorizados para gestionar edificios, departamentos, residentes y pagos.",
+    sections: [
+      {
+        title: "Uso autorizado",
+        body:
+          "La plataforma debe ser usada solo por personas autorizadas por la administracion del edificio, condominio o empresa responsable."
+      },
+      {
+        title: "Responsabilidad del administrador",
+        body:
+          "El administrador declara que cuenta con autorizacion o base legal para registrar, consultar y actualizar los datos personales ingresados en la app."
+      },
+      {
+        title: "Exactitud de la informacion",
+        body:
+          "El usuario es responsable de ingresar informacion correcta, actualizada y necesaria para la administracion del inmueble."
+      },
+      {
+        title: "Uso indebido",
+        body:
+          "No se debe registrar informacion falsa, innecesaria, discriminatoria, sensible o ajena a la gestion del edificio."
+      },
+      {
+        title: "Cuentas y seguridad",
+        body:
+          "Cada usuario debe proteger sus credenciales y cerrar sesion cuando use equipos compartidos. Las acciones pueden quedar registradas para auditoria."
+      },
+      {
+        title: "Limitacion de responsabilidad",
+        body:
+          "La app es una herramienta de administracion. Las decisiones, cobros, comunicaciones y registros realizados con ella son responsabilidad del administrador que la opera."
+      }
+    ]
+  },
+  privacy: {
+    title: "Politica de Privacidad",
+    intro:
+      "Esta politica explica el tratamiento de datos personales realizado en Edificio App para fines de administracion inmobiliaria.",
+    sections: [
+      {
+        title: "Datos tratados",
+        body:
+          "La app puede registrar nombres, apellidos, documento, correo, telefono, departamento, rol de residente, pagos, saldos, fechas y datos de auditoria."
+      },
+      {
+        title: "Finalidad",
+        body:
+          "Los datos se usan para administrar edificios, residentes, ocupacion de departamentos, pagos, cobranzas, reportes internos y trazabilidad de cambios."
+      },
+      {
+        title: "Acceso a datos",
+        body:
+          "Solo usuarios autorizados por la administracion deben acceder a la informacion. El acceso debe limitarse a lo necesario para cumplir sus funciones."
+      },
+      {
+        title: "Conservacion",
+        body:
+          "Los datos se conservan mientras sean necesarios para la administracion, obligaciones internas, historiales de pago, auditoria o cumplimiento legal."
+      },
+      {
+        title: "Derechos de los titulares",
+        body:
+          "Los titulares pueden solicitar acceso, rectificacion, cancelacion u oposicion de sus datos ante el responsable de la administracion."
+      },
+      {
+        title: "Seguridad",
+        body:
+          "La administracion debe aplicar medidas razonables de seguridad, control de acceso, copias de respaldo y confidencialidad para proteger la informacion."
+      },
+      {
+        title: "Base normativa",
+        body:
+          "En Peru, el tratamiento de datos personales debe considerar la Ley N. 29733 y su reglamento, incluyendo el deber de informacion y las obligaciones sobre bancos de datos personales."
+      }
+    ]
+  }
+};
 
 const emptyForms = {
   buildings: { name: "", address: "", district: "", city: "" },
@@ -106,6 +187,7 @@ function App() {
   const [deleteDialog, setDeleteDialog] = useState(null);
   const [apartmentDetail, setApartmentDetail] = useState(null);
   const [alertDialog, setAlertDialog] = useState(null);
+  const [legalDialog, setLegalDialog] = useState(null);
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
@@ -339,8 +421,9 @@ function App() {
   if (!session?.accessToken) {
     return (
       <>
-        <LoginScreen onLogin={login} loading={loading} notice={notice} />
+        <LoginScreen onLogin={login} loading={loading} notice={notice} onOpenLegal={setLegalDialog} />
         {alertDialog && <AlertDialog alert={alertDialog} onClose={() => setAlertDialog(null)} />}
+        {legalDialog && <LegalModal document={LEGAL_DOCS[legalDialog]} onClose={() => setLegalDialog(null)} />}
         {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
       </>
     );
@@ -378,6 +461,10 @@ function App() {
             );
           })}
         </nav>
+        <div className="sidebar-legal">
+          <button onClick={() => setLegalDialog("terms")}>Terminos</button>
+          <button onClick={() => setLegalDialog("privacy")}>Privacidad</button>
+        </div>
         <button className="logout" onClick={logout}>
           <LogOut size={18} />
           <span>Salir</span>
@@ -506,14 +593,16 @@ function App() {
         {apartmentDetail && <ApartmentDetailModal apartment={apartmentDetail} data={data} onClose={() => setApartmentDetail(null)} />}
 
         {alertDialog && <AlertDialog alert={alertDialog} onClose={() => setAlertDialog(null)} />}
+        {legalDialog && <LegalModal document={LEGAL_DOCS[legalDialog]} onClose={() => setLegalDialog(null)} />}
         {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
       </main>
     </div>
   );
 }
 
-function LoginScreen({ onLogin, loading, notice }) {
+function LoginScreen({ onLogin, loading, notice, onOpenLegal }) {
   const [credentials, setCredentials] = useState({ username: "", password: "" });
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
 
   return (
     <main className="login-page">
@@ -527,6 +616,7 @@ function LoginScreen({ onLogin, loading, notice }) {
           className="login-form"
           onSubmit={(event) => {
             event.preventDefault();
+            if (!acceptedLegal) return;
             onLogin(credentials);
           }}
         >
@@ -547,8 +637,22 @@ function LoginScreen({ onLogin, loading, notice }) {
               autoComplete="current-password"
             />
           </label>
+          <label className="legal-consent">
+            <input type="checkbox" checked={acceptedLegal} onChange={(event) => setAcceptedLegal(event.target.checked)} />
+            <span>
+              Acepto los{" "}
+              <button type="button" className="inline-link" onClick={() => onOpenLegal("terms")}>
+                Terminos y Condiciones
+              </button>{" "}
+              y la{" "}
+              <button type="button" className="inline-link" onClick={() => onOpenLegal("privacy")}>
+                Politica de Privacidad
+              </button>
+              . Declaro que cuento con autorizacion para registrar y administrar los datos personales ingresados.
+            </span>
+          </label>
           {notice && <div className="notice">{notice}</div>}
-          <button className="primary" disabled={loading}>
+          <button className="primary" disabled={loading || !acceptedLegal}>
             Ingresar
           </button>
         </form>
@@ -1013,6 +1117,41 @@ function ConfirmDialog({ item, loading, onCancel, onConfirm }) {
   );
 }
 
+function LegalModal({ document, onClose }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal legal-modal" role="dialog" aria-modal="true" aria-label={document.title}>
+        <div className="modal-header">
+          <div>
+            <span>Documento legal</span>
+            <h2>{document.title}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Cerrar">
+            <X size={17} />
+          </button>
+        </div>
+        <p className="legal-intro">{document.intro}</p>
+        <div className="legal-warning">
+          Este texto es una base operativa y debe ser revisado por un abogado antes de usar la app con datos reales.
+        </div>
+        <div className="legal-sections">
+          {document.sections.map((section) => (
+            <section key={section.title}>
+              <h3>{section.title}</h3>
+              <p>{section.body}</p>
+            </section>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="primary" onClick={onClose}>
+            Entendido
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function AlertDialog({ alert, onClose }) {
   const Icon = CircleAlert;
   const details = alert.details ? Object.entries(alert.details) : [];
@@ -1370,13 +1509,19 @@ function StatusBadge({ status }) {
   return <span className={`status ${status?.toLowerCase()}`}>{PAYMENT_STATUS_LABELS[status] || status}</span>;
 }
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
 function createApi(token, onRefresh) {
   async function request(path, options = {}) {
-    const response = await fetch(path, buildOptions(options, token));
+    const response = await fetch(apiUrl(path), buildOptions(options, token));
 
     if (response.status === 401 && onRefresh && !options.skipRefresh) {
       const refreshedToken = await onRefresh();
-      const retryResponse = await fetch(path, buildOptions({ ...options, skipRefresh: true }, refreshedToken));
+      const retryResponse = await fetch(apiUrl(path), buildOptions({ ...options, skipRefresh: true }, refreshedToken));
       return parseResponse(retryResponse);
     }
 
