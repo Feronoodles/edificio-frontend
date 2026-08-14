@@ -215,7 +215,12 @@ function App() {
         api.get("/api/residents"),
         api.get("/api/payments")
       ]);
-      setData({ buildings, apartments, residents, payments });
+      setData({
+        buildings: responseItems(buildings),
+        apartments: responseItems(apartments),
+        residents: responseItems(residents),
+        payments: responseItems(payments)
+      });
     } catch (error) {
       showError(error);
       if (error.status === 401) clearSession();
@@ -1589,6 +1594,12 @@ function serialize(type, form) {
     concept: paymentConcept(form),
     paidAt: form.status === "PAID" ? form.paidAt || today() : null
   };
+}
+
+function responseItems(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.content)) return response.content;
+  return [];
 }
 
 function normalizeForForm(type, row) {
