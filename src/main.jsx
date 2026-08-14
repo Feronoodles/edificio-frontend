@@ -1592,7 +1592,9 @@ function serialize(type, form) {
     amount: Number(form.amount),
     paidAmount: Number(form.paidAmount || 0),
     concept: paymentConcept(form),
-    paidAt: form.status === "PAID" ? form.paidAt || today() : null
+    paidAt: form.status === "PAID" ? form.paidAt || today() : null,
+    paymentMethod: form.paymentMethod || null,
+    reference: String(form.reference || "").trim() || null
   };
 }
 
